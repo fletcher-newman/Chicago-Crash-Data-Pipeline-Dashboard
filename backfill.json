@@ -1,0 +1,38 @@
+{
+    "mode": "backfill",
+    "source": "crash",
+    "join_key": "crash_record_id",
+    "date_range": {
+      "field": "crash_date",
+      "start": "2020-01-01T00:00:00",
+      "end":   "2020-01-02T00:00:00"
+    },
+    "primary": {
+      "id": "85ca-t3if",
+      "alias": "crashes",
+      "select": "crash_record_id,crash_date,crash_type,posted_speed_limit,weather_condition,lane_cnt,hit_and_run_i,beat_of_occurrence,num_units,injuries_total,crash_hour,crash_day_of_week,latitude,longitude,traffic_control_device,work_zone_i,work_zone_type,private_property_i,lighting_condition,road_defect,roadway_surface_cond,street_direction,trafficway_type,intersection_related_i",
+      "order": "crash_date, crash_record_id",
+      "page_size": 2000
+    },
+    "enrich": [
+      {
+        "id": "68nd-jvt3",
+        "alias": "vehicles",
+        "select": "crash_record_id,make,vehicle_year,travel_direction,maneuver"
+      },
+      {
+        "id": "u6pd-qa9d",
+        "alias": "people",
+        "select": "crash_record_id,person_type,age,sex,injury_classification,seat_no,airbag_deployed"
+      }
+    ],
+    "batching": {
+      "id_batch_size": 50,
+      "max_workers": { "vehicles": 4, "people": 4 }
+    },
+    "storage": {
+      "bucket": "raw-data",
+      "prefix": "crash",
+      "compress": true
+    }
+  }
