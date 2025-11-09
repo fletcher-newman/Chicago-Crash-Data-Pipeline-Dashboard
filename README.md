@@ -6,7 +6,7 @@ A real-time data engineering pipeline that extracts, transforms, and analyzes Ch
 ![Language](https://img.shields.io/badge/Language-Python%20%7C%20Go-green)
 ![Database](https://img.shields.io/badge/Database-DuckDB-orange)
 
-## 🎯 Project Overview
+## Project Overview
 
 - **Real-time ETL pipeline** processing Chicago Open Data Portal crash records
 - **Medallion architecture** for data quality layers (Bronze/Raw → Silver/Transformed → Gold/Analytics)
