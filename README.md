@@ -20,7 +20,7 @@ This project demonstrates end-to-end data engineering skills including:
 ### Target Use Case
 Predictive analytics for **hit-and-run crashes** - building features for a binary classification model to identify patterns and risk factors.
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌─────────────────┐
@@ -48,7 +48,7 @@ Predictive analytics for **hit-and-run crashes** - building features for a binar
 └─────────────────┘      └─────────────────┘
 ```
 
-## 🛠️ Technology Stack
+## Technology Stack
 
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
@@ -62,7 +62,7 @@ Predictive analytics for **hit-and-run crashes** - building features for a binar
 | **Scheduling** | Linux Cron | Automated periodic data ingestion |
 | **PDF Reports** | ReportLab | Comprehensive pipeline reporting |
 
-## 📊 Dashboard Features
+## Dashboard Features
 
 ### 1. **Data Fetcher Tab**
 - Manual and scheduled data extraction
@@ -91,7 +91,7 @@ Predictive analytics for **hit-and-run crashes** - building features for a binar
 - Error tracking and debugging
 - Downloadable PDF comprehensive reports
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 - Docker and Docker Compose
@@ -136,7 +136,7 @@ http://localhost:8501
 6. Monitor progress in the dashboard
 7. View results in the **EDA** tab once complete
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 Pipeline/
@@ -160,7 +160,7 @@ Pipeline/
 └── README.md            # This file
 ```
 
-## 🎓 Key Learning Outcomes
+## Key Learning Outcomes
 
 This project demonstrates proficiency in:
 
@@ -187,7 +187,7 @@ This project demonstrates proficiency in:
    - Configuration management
    - Error handling and logging
 
-## 📈 Data Pipeline Flow
+## Data Pipeline Flow
 
 1. **Bronze Layer (Raw)**
    - Extractor fetches raw JSON from Chicago Data Portal
@@ -206,32 +206,7 @@ This project demonstrates proficiency in:
    - Optimized schema for analytical queries
    - Accessible via Streamlit dashboard
 
-## 🔍 Sample Queries
-
-The Gold layer supports analytical queries like:
-
-```sql
--- Hit-and-run rate by time of day
-SELECT
-    EXTRACT(hour FROM crash_date) as hour,
-    AVG(hit_and_run_i) * 100 as hit_run_rate,
-    COUNT(*) as total_crashes
-FROM crashes
-GROUP BY hour
-ORDER BY hour;
-
--- Crashes by weather and road conditions
-SELECT
-    weather_condition,
-    roadway_surface_cond,
-    COUNT(*) as crashes,
-    AVG(hit_and_run_i) * 100 as hit_run_rate
-FROM crashes
-GROUP BY weather_condition, roadway_surface_cond
-ORDER BY crashes DESC;
-```
-
-## 🎯 Future Enhancements
+## Future Enhancements
 
 - [ ] Machine learning model for hit-and-run prediction
 - [ ] Real-time streaming with Apache Kafka
@@ -240,16 +215,8 @@ ORDER BY crashes DESC;
 - [ ] AWS/GCP deployment
 - [ ] API endpoint for model serving
 
-## 📝 License
-
-This project is open source and available under the MIT License.
-
-## 👤 Author
+## Author
 
 **Fletcher Newman**
 - GitHub: [@fletcher-newman](https://github.com/fletcher-newman)
 - Email: fletcht13@gmail.com
-
----
-
-*Built as a portfolio project to demonstrate data engineering and analytics skills for prospective employers.*
