@@ -25,9 +25,9 @@ ENV/
 minio-data/
 
 # DuckDB database files (can be regenerated)
-data/
-*.duckdb
-*.duckdb.wal
+# data/
+# *.duckdb
+# *.duckdb.wal
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
