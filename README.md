@@ -20,6 +20,50 @@ This project demonstrates end-to-end data engineering skills including:
 ### Target Use Case
 Predictive analytics for **hit-and-run crashes** - building features for a binary classification model to identify patterns and risk factors.
 
+## Quick Start
+
+### Prerequisites
+- Docker and Docker Compose
+- Linux/macOS (Windows with WSL2)
+
+### Setup
+
+1. **Clone the repository**
+```bash
+git clone https://github.com/fletcher-newman/Chicago-Crash-Data-Pipeline-Dashboard.git
+cd Chicago-Crash-Data-Pipeline-Dashboard
+```
+
+2. **Create environment file**
+```bash
+cp .env.example .env
+# Edit .env with your configuration (or use defaults)
+```
+
+3. **Start the pipeline**
+```bash
+docker compose up -d
+```
+
+4. **Access the dashboard**
+```
+http://localhost:8501
+```
+
+5. **Access supporting services**
+- MinIO Console: `http://localhost:9001` (admin/minioadmin)
+- RabbitMQ Management: `http://localhost:15672` (guest/guest)
+
+### Running Data Extraction
+
+1. Navigate to the **Data Fetcher** tab in Streamlit
+2. Select "Backfill" mode
+3. Choose date range (e.g., last 30 days)
+4. Set batch size (2000 recommended)
+5. Click "Start Extraction"
+6. Monitor progress in the dashboard
+7. View results in the **EDA** tab once complete
+
 ## Architecture
 
 ```
@@ -90,51 +134,6 @@ Predictive analytics for **hit-and-run crashes** - building features for a binar
 - Data quality metrics
 - Error tracking and debugging
 - Downloadable PDF comprehensive reports
-
-## Quick Start
-
-### Prerequisites
-- Docker and Docker Compose
-- 4GB+ RAM recommended
-- Linux/macOS (Windows with WSL2)
-
-### Setup
-
-1. **Clone the repository**
-```bash
-git clone https://github.com/fletcher-newman/Chicago-Crash-Data-Pipeline-Dashboard.git
-cd Chicago-Crash-Data-Pipeline-Dashboard
-```
-
-2. **Create environment file**
-```bash
-cp .env.example .env
-# Edit .env with your configuration (or use defaults)
-```
-
-3. **Start the pipeline**
-```bash
-docker compose up -d
-```
-
-4. **Access the dashboard**
-```
-http://localhost:8501
-```
-
-5. **Access supporting services**
-- MinIO Console: `http://localhost:9001` (admin/minioadmin)
-- RabbitMQ Management: `http://localhost:15672` (guest/guest)
-
-### Running Your First Data Extraction
-
-1. Navigate to the **Data Fetcher** tab in Streamlit
-2. Select "Backfill" mode
-3. Choose date range (e.g., last 30 days)
-4. Set batch size (2000 recommended)
-5. Click "Start Extraction"
-6. Monitor progress in the dashboard
-7. View results in the **EDA** tab once complete
 
 ## Project Structure
 
