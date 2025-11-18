@@ -1,14 +1,13 @@
 # Chicago Crash Data ETL Pipeline Dashboard
 
-A real-time data engineering pipeline that extracts, transforms, and analyzes Chicago traffic crash data using a medallion architecture (Bronze → Silver → Gold). Features a comprehensive Streamlit dashboard for data exploration, scheduling, and reporting.
+A real-time data engineering pipeline that extracts, transforms, and analyzes Chicago traffic crash data using a medallion architecture. Features a comprehensive Streamlit dashboard for data exploration, scheduling, and reporting.
 
 ![Pipeline Architecture](https://img.shields.io/badge/Architecture-Medallion-blue)
 ![Language](https://img.shields.io/badge/Language-Python%20%7C%20Go-green)
 ![Database](https://img.shields.io/badge/Database-DuckDB-orange)
 
-## 🎯 Project Overview
+## Project Overview
 
-This project demonstrates end-to-end data engineering skills including:
 - **Real-time ETL pipeline** processing Chicago Open Data Portal crash records
 - **Medallion architecture** for data quality layers (Bronze/Raw → Silver/Transformed → Gold/Analytics)
 - **Message queue orchestration** using RabbitMQ for decoupled microservices
