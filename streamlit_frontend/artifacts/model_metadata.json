@@ -1,0 +1,35 @@
+{
+    "feature_names": [
+        "crash_day_of_week",
+        "crash_hour",
+        "is_weekend",
+        "hour_bin",
+        "beat_of_occurrence",
+        "latitude",
+        "longitude",
+        "lat_bin",
+        "lng_bin",
+        "crash_type",
+        "num_units",
+        "injuries_total",
+        "lighting_condition",
+        "posted_speed_limit",
+        "road_defect",
+        "roadway_surface_cond",
+        "street_direction",
+        "trafficway_type",
+        "weather_condition",
+        "traffic_control_device",
+        "intersection_related_i",
+        "work_zone_i",
+        "private_property_i"
+    ],
+    "model_file_name": "artifacts/model.pkl",
+    "threshold": 0.26,
+    "model_type": "XGBoost",
+    "test_metrics": {
+        "f1": 0.556060445947374,
+        "recal": 0.7711019929660023,
+        "precision": 0.43480416460089244
+    }
+}

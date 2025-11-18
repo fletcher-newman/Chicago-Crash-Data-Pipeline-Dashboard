@@ -6,10 +6,17 @@ import plotly.express as px
 import pandas as pd
 import duckdb
 from scheduler_tab import scheduler_tab
+# import pickle
+import joblib
+import xgboost
 
 # Configuration
 import os
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000/api")
+
+# Model artifact paths
+MODEL_ARTIFACT_PATH = "artifacts/model.pkl"
+MODEL_METADATA_PATH = "artifacts/model_metadata.json"
 
 # Page configuration
 st.set_page_config(
@@ -18,6 +25,81 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+@st.cache_resource
+def load_model(model_path: str):
+    """
+    Load the trained ML model from a pickle file.
+
+    Args:
+        model_path: Path to the .pkl model file
+
+    Returns:
+        The loaded model object, or None if loading fails
+    """
+    try:
+        import sklearn.compose
+        import sklearn.preprocessing
+        import sklearn.pipeline
+        # with open(model_path, 'rb') as f:
+        #     model = pickle.load(f)
+        model = joblib.load(model_path)
+        return model
+    except FileNotFoundError:
+        st.error(f"❌ Model file not found at: {model_path}")
+        st.info("Please ensure the model file exists in the artifacts folder.")
+        return None
+    except Exception as e:
+        st.error(f"❌ Failed to load model: {str(e)}")
+        return None
+
+@st.cache_data
+def load_model_metadata(metadata_path: str):
+    """
+    Load model metadata from JSON file.
+
+    Args:
+        metadata_path: Path to the model_metadata.json file
+
+    Returns:
+        Dictionary containing model metadata, or None if loading fails
+    """
+    try:
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+        return metadata
+    except FileNotFoundError:
+        st.error(f"❌ Model metadata file not found at: {metadata_path}")
+        st.info("Please ensure the metadata file exists in the artifacts folder.")
+        return None
+    except Exception as e:
+        st.error(f"❌ Failed to load model metadata: {str(e)}")
+        return None
+
+def get_duckdb_connection(db_path: str, read_only: bool = True):
+    """
+    Get a DuckDB connection.
+
+    Note: Creates a fresh connection each time. DuckDB is fast enough that
+    caching is not needed and can cause "Connection already closed" errors.
+
+    Args:
+        db_path: Path to the DuckDB database file
+        read_only: Whether to open in read-only mode (default: True)
+
+    Returns:
+        DuckDB connection object, or None if connection fails
+    """
+    try:
+        if not os.path.exists(db_path):
+            st.warning(f"⚠️ Database file not found at: {db_path}")
+            return None
+
+        conn = duckdb.connect(db_path, read_only=read_only)
+        return conn
+    except Exception as e:
+        st.error(f"❌ Failed to connect to DuckDB: {str(e)}")
+        return None
 
 def check_container_health(service_name: str) -> dict:
     """Check container health by attempting to connect to their ports."""
@@ -273,33 +355,36 @@ def render_data_management_tab():
         try:
             # Check if DB file exists and get stats
             if os.path.exists(gold_db_path):
-                conn = duckdb.connect(gold_db_path, read_only=True)
+                conn = get_duckdb_connection(gold_db_path, read_only=True)
+                if conn is None:
+                    return
 
-                # Get current database/catalog name
-                current_db = conn.execute("SELECT current_database()").fetchone()[0]
+                try:
+                    # Get current database/catalog name
+                    current_db = conn.execute("SELECT current_database()").fetchone()[0]
 
-                # Get table list from gold schema
-                tables = conn.execute(f"""
-                    SELECT table_name
-                    FROM information_schema.tables
-                    WHERE table_schema = 'gold' AND table_catalog = '{current_db}'
-                """).fetchall()
+                    # Get table list from gold schema
+                    tables = conn.execute(f"""
+                        SELECT table_name
+                        FROM information_schema.tables
+                        WHERE table_schema = 'gold' AND table_catalog = '{current_db}'
+                    """).fetchall()
 
-                # Display status card
-                st.info(f"**Database Path:** `{gold_db_path}` (catalog: `{current_db}`)")
+                    # Display status card
+                    st.info(f"**Database Path:** `{gold_db_path}` (catalog: `{current_db}`)")
 
-                if tables:
-                    st.success(f"**Tables:** {len(tables)}")
+                    if tables:
+                        st.success(f"**Tables:** {len(tables)}")
 
-                    # Show row counts per table (using full path)
-                    for table in tables:
-                        table_name = table[0]
-                        row_count = conn.execute(f"SELECT COUNT(*) FROM {current_db}.gold.{table_name}").fetchone()[0]
-                        st.metric(f"📋 {table_name}", f"{row_count:,} rows")
-                else:
-                    st.warning("Database exists but contains no tables")
-
-                conn.close()
+                        # Show row counts per table (using full path)
+                        for table in tables:
+                            table_name = table[0]
+                            row_count = conn.execute(f"SELECT COUNT(*) FROM {current_db}.gold.{table_name}").fetchone()[0]
+                            st.metric(f"📋 {table_name}", f"{row_count:,} rows")
+                    else:
+                        st.warning("Database exists but contains no tables")
+                finally:
+                    conn.close()
             else:
                 st.error("❌ Gold database file not found")
 
@@ -333,69 +418,72 @@ def render_data_management_tab():
 
     try:
         if os.path.exists(gold_db_path):
-            conn = duckdb.connect(gold_db_path, read_only=True)
+            conn = get_duckdb_connection(gold_db_path, read_only=True)
+            if conn is None:
+                return
 
-            # Get current database/catalog name
-            current_db = conn.execute("SELECT current_database()").fetchone()[0]
+            try:
+                # Get current database/catalog name
+                current_db = conn.execute("SELECT current_database()").fetchone()[0]
 
-            # Get tables from gold schema
-            tables = conn.execute(f"""
-                SELECT table_name
-                FROM information_schema.tables
-                WHERE table_schema = 'gold' AND table_catalog = '{current_db}'
-            """).fetchall()
+                # Get tables from gold schema
+                tables = conn.execute(f"""
+                    SELECT table_name
+                    FROM information_schema.tables
+                    WHERE table_schema = 'gold' AND table_catalog = '{current_db}'
+                """).fetchall()
 
-            if tables:
-                # Get first table (crashes)
-                table_name = tables[0][0]
-                full_table_path = f"{current_db}.gold.{table_name}"
+                if tables:
+                    # Get first table (crashes)
+                    table_name = tables[0][0]
+                    full_table_path = f"{current_db}.gold.{table_name}"
 
-                # Get all columns
-                columns_result = conn.execute(f"DESCRIBE {full_table_path}").fetchall()
-                all_columns = [col[0] for col in columns_result]
+                    # Get all columns
+                    columns_result = conn.execute(f"DESCRIBE {full_table_path}").fetchall()
+                    all_columns = [col[0] for col in columns_result]
 
-                col1, col2 = st.columns(2)
+                    col1, col2 = st.columns(2)
 
-                with col1:
-                    # Column selection
-                    selected_columns = st.multiselect(
-                        "Select Columns to Preview",
-                        all_columns,
-                        default=all_columns[:8] if len(all_columns) >= 8 else all_columns,
-                        help="If empty, will auto-select first 8 columns"
-                    )
+                    with col1:
+                        # Column selection
+                        selected_columns = st.multiselect(
+                            "Select Columns to Preview",
+                            all_columns,
+                            default=all_columns[:8] if len(all_columns) >= 8 else all_columns,
+                            help="If empty, will auto-select first 8 columns"
+                        )
 
-                with col2:
-                    # Row limit slider
-                    row_limit = st.slider(
-                        "Number of Rows",
-                        min_value=10,
-                        max_value=200,
-                        value=50,
-                        step=10
-                    )
+                    with col2:
+                        # Row limit slider
+                        row_limit = st.slider(
+                            "Number of Rows",
+                            min_value=10,
+                            max_value=200,
+                            value=50,
+                            step=10
+                        )
 
-                if st.button("🔍 Preview Data", key="preview_gold"):
-                    # Use selected columns or default to first 8
-                    cols_to_show = selected_columns if selected_columns else all_columns[:8]
-                    cols_str = ", ".join(cols_to_show)
+                    if st.button("🔍 Preview Data", key="preview_gold"):
+                        # Use selected columns or default to first 8
+                        cols_to_show = selected_columns if selected_columns else all_columns[:8]
+                        cols_str = ", ".join(cols_to_show)
 
-                    # Query data using full table path
-                    query = f"SELECT {cols_str} FROM {full_table_path} LIMIT {row_limit}"
-                    df = conn.execute(query).fetchdf()
+                        # Query data using full table path
+                        query = f"SELECT {cols_str} FROM {full_table_path} LIMIT {row_limit}"
+                        df = conn.execute(query).fetchdf()
 
-                    st.success(f"Showing {len(df)} rows from `{table_name}`")
-                    st.dataframe(df, use_container_width=True)
+                        st.success(f"Showing {len(df)} rows from `{table_name}`")
+                        st.dataframe(df, use_container_width=True)
 
-                    # Show column types
-                    with st.expander("📋 Column Types"):
-                        for col in columns_result:
-                            if col[0] in cols_to_show:
-                                st.text(f"{col[0]}: {col[1]}")
-            else:
-                st.warning("No tables found in Gold database")
-
-            conn.close()
+                        # Show column types
+                        with st.expander("📋 Column Types"):
+                            for col in columns_result:
+                                if col[0] in cols_to_show:
+                                    st.text(f"{col[0]}: {col[1]}")
+                else:
+                    st.warning("No tables found in Gold database")
+            finally:
+                conn.close()
         else:
             st.warning("Gold database file not found. Run the cleaner first.")
 
@@ -728,27 +816,30 @@ def render_eda_tab():
         return
 
     try:
-        conn = duckdb.connect(gold_db_path, read_only=True)
-
-        # Get current database/catalog name
-        current_db = conn.execute("SELECT current_database()").fetchone()[0]
-
-        # Check if crashes table exists
-        tables = conn.execute(f"""
-            SELECT table_name
-            FROM information_schema.tables
-            WHERE table_schema = 'gold' AND table_catalog = '{current_db}'
-        """).fetchall()
-
-        if not tables:
-            st.warning("⚠️ No tables found in Gold database. Run the pipeline first.")
-            conn.close()
+        conn = get_duckdb_connection(gold_db_path, read_only=True)
+        if conn is None:
             return
 
-        # Load data
-        full_table_path = f"{current_db}.gold.crashes"
-        df = conn.execute(f"SELECT * FROM {full_table_path}").fetchdf()
-        conn.close()
+        try:
+            # Get current database/catalog name
+            current_db = conn.execute("SELECT current_database()").fetchone()[0]
+
+            # Check if crashes table exists
+            tables = conn.execute(f"""
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = 'gold' AND table_catalog = '{current_db}'
+            """).fetchall()
+
+            if not tables:
+                st.warning("⚠️ No tables found in Gold database. Run the pipeline first.")
+                return
+
+            # Load data
+            full_table_path = f"{current_db}.gold.crashes"
+            df = conn.execute(f"SELECT * FROM {full_table_path}").fetchdf()
+        finally:
+            conn.close()
 
         if df.empty:
             st.warning("⚠️ Gold database is empty. Run the pipeline first.")
@@ -1275,46 +1366,48 @@ def render_reports_tab():
 
     try:
         if os.path.exists(gold_db_path):
-            conn = duckdb.connect(gold_db_path, read_only=True)
-            current_db = conn.execute("SELECT current_database()").fetchone()[0]
+            conn = get_duckdb_connection(gold_db_path, read_only=True)
+            if conn is not None:
+                try:
+                    current_db = conn.execute("SELECT current_database()").fetchone()[0]
 
-            # Get row count
-            try:
-                gold_row_count = conn.execute(f"SELECT COUNT(*) FROM {current_db}.gold.crashes").fetchone()[0]
-            except:
-                gold_row_count = 0
+                    # Get row count
+                    try:
+                        gold_row_count = conn.execute(f"SELECT COUNT(*) FROM {current_db}.gold.crashes").fetchone()[0]
+                    except:
+                        gold_row_count = 0
 
-            # Get latest corr_id and last run timestamp
-            try:
-                result = conn.execute(f"""
-                    SELECT corr_id, MAX(inserted_at) as last_run
-                    FROM {current_db}.gold.crashes
-                    GROUP BY corr_id
-                    ORDER BY last_run DESC
-                    LIMIT 1
-                """).fetchone()
+                    # Get latest corr_id and last run timestamp
+                    try:
+                        result = conn.execute(f"""
+                            SELECT corr_id, MAX(inserted_at) as last_run
+                            FROM {current_db}.gold.crashes
+                            GROUP BY corr_id
+                            ORDER BY last_run DESC
+                            LIMIT 1
+                        """).fetchone()
 
-                if result:
-                    latest_corr_id = result[0]
-                    last_run_timestamp = result[1] if result[1] else "N/A"
+                        if result:
+                            latest_corr_id = result[0]
+                            last_run_timestamp = result[1] if result[1] else "N/A"
 
-            except:
-                pass
+                    except:
+                        pass
 
-            # Get latest data date fetched (max crash_date from Gold)
-            try:
-                result = conn.execute(f"""
-                    SELECT MAX(crash_date) as latest_crash_date
-                    FROM {current_db}.gold.crashes
-                """).fetchone()
+                    # Get latest data date fetched (max crash_date from Gold)
+                    try:
+                        result = conn.execute(f"""
+                            SELECT MAX(crash_date) as latest_crash_date
+                            FROM {current_db}.gold.crashes
+                        """).fetchone()
 
-                if result and result[0]:
-                    latest_data_date = result[0]
+                        if result and result[0]:
+                            latest_data_date = result[0]
 
-            except:
-                pass
-
-            conn.close()
+                    except:
+                        pass
+                finally:
+                    conn.close()
     except Exception as e:
         st.warning(f"Could not read Gold database: {str(e)}")
 
@@ -1382,26 +1475,28 @@ def render_reports_tab():
         rows_per_table = {}
 
         try:
-            conn = duckdb.connect(gold_db_path, read_only=True)
-            current_db = conn.execute("SELECT current_database()").fetchone()[0]
+            conn = get_duckdb_connection(gold_db_path, read_only=True)
+            if conn is not None:
+                try:
+                    current_db = conn.execute("SELECT current_database()").fetchone()[0]
 
-            # Get row count for this specific corr_id
-            result = conn.execute(f"""
-                SELECT COUNT(*) as row_count,
-                       MIN(inserted_at) as start_time,
-                       MAX(inserted_at) as end_time
-                FROM {current_db}.gold.crashes
-                WHERE corr_id = '{latest_corr_id}'
-            """).fetchone()
+                    # Get row count for this specific corr_id
+                    result = conn.execute(f"""
+                        SELECT COUNT(*) as row_count,
+                               MIN(inserted_at) as start_time,
+                               MAX(inserted_at) as end_time
+                        FROM {current_db}.gold.crashes
+                        WHERE corr_id = '{latest_corr_id}'
+                    """).fetchone()
 
-            if result:
-                rows_per_table['crashes'] = result[0]
-                if result[1]:
-                    start_time = result[1]
-                if result[2]:
-                    end_time = result[2]
-
-            conn.close()
+                    if result:
+                        rows_per_table['crashes'] = result[0]
+                        if result[1]:
+                            start_time = result[1]
+                        if result[2]:
+                            end_time = result[2]
+                finally:
+                    conn.close()
         except:
             pass
 
@@ -1443,30 +1538,32 @@ def render_reports_tab():
 
     if os.path.exists(gold_db_path) and gold_row_count > 0:
         try:
-            conn = duckdb.connect(gold_db_path, read_only=True)
-            current_db = conn.execute("SELECT current_database()").fetchone()[0]
+            conn = get_duckdb_connection(gold_db_path, read_only=True)
+            if conn is not None:
+                try:
+                    current_db = conn.execute("SELECT current_database()").fetchone()[0]
 
-            df_sample = conn.execute(f"SELECT * FROM {current_db}.gold.crashes LIMIT 1000").fetchdf()
+                    df_sample = conn.execute(f"SELECT * FROM {current_db}.gold.crashes LIMIT 1000").fetchdf()
 
-            col1, col2, col3 = st.columns(3)
+                    col1, col2, col3 = st.columns(3)
 
-            with col1:
-                # Missing value rate
-                missing_pct = (df_sample.isnull().sum().sum() / (len(df_sample) * len(df_sample.columns)) * 100)
-                st.metric("Missing Values %", f"{missing_pct:.2f}%")
+                    with col1:
+                        # Missing value rate
+                        missing_pct = (df_sample.isnull().sum().sum() / (len(df_sample) * len(df_sample.columns)) * 100)
+                        st.metric("Missing Values %", f"{missing_pct:.2f}%")
 
-            with col2:
-                # Duplicate check
-                duplicate_count = df_sample.duplicated(subset=['crash_record_id']).sum()
-                st.metric("Duplicate Records", f"{duplicate_count}")
+                    with col2:
+                        # Duplicate check
+                        duplicate_count = df_sample.duplicated(subset=['crash_record_id']).sum()
+                        st.metric("Duplicate Records", f"{duplicate_count}")
 
-            with col3:
-                # Hit & Run rate
-                if 'hit_and_run_i' in df_sample.columns:
-                    hr_rate = (df_sample['hit_and_run_i'].sum() / len(df_sample) * 100)
-                    st.metric("Hit & Run Rate", f"{hr_rate:.2f}%")
-
-            conn.close()
+                    with col3:
+                        # Hit & Run rate
+                        if 'hit_and_run_i' in df_sample.columns:
+                            hr_rate = (df_sample['hit_and_run_i'].sum() / len(df_sample) * 100)
+                            st.metric("Hit & Run Rate", f"{hr_rate:.2f}%")
+                finally:
+                    conn.close()
 
         except Exception as e:
             st.error(f"Error calculating quality metrics: {str(e)}")
@@ -1489,33 +1586,35 @@ def render_reports_tab():
 
         if os.path.exists(gold_db_path) and gold_row_count > 0:
             try:
-                conn = duckdb.connect(gold_db_path, read_only=True)
-                current_db = conn.execute("SELECT current_database()").fetchone()[0]
+                conn = get_duckdb_connection(gold_db_path, read_only=True)
+                if conn is not None:
+                    try:
+                        current_db = conn.execute("SELECT current_database()").fetchone()[0]
 
-                # Get all correlation IDs with their stats
-                run_history_df = conn.execute(f"""
-                    SELECT
-                        corr_id,
-                        'Unknown' as mode,
-                        COUNT(*) as rows,
-                        'Completed' as status,
-                        MIN(inserted_at) as started,
-                        MAX(inserted_at) as ended
-                    FROM {current_db}.gold.crashes
-                    GROUP BY corr_id
-                    ORDER BY MAX(inserted_at) DESC
-                """).fetchdf()
+                        # Get all correlation IDs with their stats
+                        run_history_df = conn.execute(f"""
+                            SELECT
+                                corr_id,
+                                'Unknown' as mode,
+                                COUNT(*) as rows,
+                                'Completed' as status,
+                                MIN(inserted_at) as started,
+                                MAX(inserted_at) as ended
+                            FROM {current_db}.gold.crashes
+                            GROUP BY corr_id
+                            ORDER BY MAX(inserted_at) DESC
+                        """).fetchdf()
 
-                csv = run_history_df.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download Run History CSV",
-                    data=csv,
-                    file_name=f"run_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv",
-                    key="download_run_history"
-                )
-
-                conn.close()
+                        csv = run_history_df.to_csv(index=False)
+                        st.download_button(
+                            label="📥 Download Run History CSV",
+                            data=csv,
+                            file_name=f"run_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                            mime="text/csv",
+                            key="download_run_history"
+                        )
+                    finally:
+                        conn.close()
             except Exception as e:
                 st.error(f"Error: {str(e)}")
         else:
@@ -1527,28 +1626,30 @@ def render_reports_tab():
 
         if os.path.exists(gold_db_path) and gold_row_count > 0:
             try:
-                conn = duckdb.connect(gold_db_path, read_only=True)
-                current_db = conn.execute("SELECT current_database()").fetchone()[0]
+                conn = get_duckdb_connection(gold_db_path, read_only=True)
+                if conn is not None:
+                    try:
+                        current_db = conn.execute("SELECT current_database()").fetchone()[0]
 
-                # Get table summary with latest crash_date
-                snapshot_df = conn.execute(f"""
-                    SELECT
-                        'crashes' as table_name,
-                        COUNT(*) as row_count,
-                        MAX(crash_date) as latest_data_date
-                    FROM {current_db}.gold.crashes
-                """).fetchdf()
+                        # Get table summary with latest crash_date
+                        snapshot_df = conn.execute(f"""
+                            SELECT
+                                'crashes' as table_name,
+                                COUNT(*) as row_count,
+                                MAX(crash_date) as latest_data_date
+                            FROM {current_db}.gold.crashes
+                        """).fetchdf()
 
-                csv = snapshot_df.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download Gold Snapshot CSV",
-                    data=csv,
-                    file_name=f"gold_snapshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv",
-                    key="download_gold_snapshot"
-                )
-
-                conn.close()
+                        csv = snapshot_df.to_csv(index=False)
+                        st.download_button(
+                            label="📥 Download Gold Snapshot CSV",
+                            data=csv,
+                            file_name=f"gold_snapshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                            mime="text/csv",
+                            key="download_gold_snapshot"
+                        )
+                    finally:
+                        conn.close()
             except Exception as e:
                 st.error(f"Error: {str(e)}")
         else:
@@ -1682,38 +1783,69 @@ def render_reports_tab():
                 # Run History Table
                 elements.append(Paragraph("Recent Pipeline Runs", heading_style))
 
-                conn = duckdb.connect(gold_db_path, read_only=True)
-                current_db = conn.execute("SELECT current_database()").fetchone()[0]
+                conn = get_duckdb_connection(gold_db_path, read_only=True)
+                if conn is None:
+                    st.error("Failed to connect to database for PDF generation")
+                    return
 
-                run_history_df = conn.execute(f"""
-                    SELECT
-                        corr_id,
-                        'Streaming/Backfill' as mode,
-                        COUNT(*) as rows,
-                        'Completed' as status,
-                        MIN(inserted_at) as started,
-                        MAX(inserted_at) as ended
-                    FROM {current_db}.gold.crashes
-                    GROUP BY corr_id
-                    ORDER BY MAX(inserted_at) DESC
-                    LIMIT 10
-                """).fetchdf()
+                try:
+                    current_db = conn.execute("SELECT current_database()").fetchone()[0]
 
-                if not run_history_df.empty:
-                    # Prepare table data
-                    run_data = [['Correlation ID', 'Rows', 'Status', 'Started', 'Ended']]
-                    for _, row in run_history_df.iterrows():
-                        run_data.append([
-                            str(row['corr_id'])[:30] + '...' if len(str(row['corr_id'])) > 30 else str(row['corr_id']),
-                            str(row['rows']),
-                            str(row['status']),
-                            str(row['started'])[:19] if pd.notna(row['started']) else 'N/A',
-                            str(row['ended'])[:19] if pd.notna(row['ended']) else 'N/A'
-                        ])
+                    run_history_df = conn.execute(f"""
+                        SELECT
+                            corr_id,
+                            'Streaming/Backfill' as mode,
+                            COUNT(*) as rows,
+                            'Completed' as status,
+                            MIN(inserted_at) as started,
+                            MAX(inserted_at) as ended
+                        FROM {current_db}.gold.crashes
+                        GROUP BY corr_id
+                        ORDER BY MAX(inserted_at) DESC
+                        LIMIT 10
+                    """).fetchdf()
 
-                    run_table = Table(run_data, colWidths=[2*inch, 0.7*inch, 0.9*inch, 1.5*inch, 1.5*inch])
-                    run_table.setStyle(TableStyle([
-                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3b82f6')),
+                    if not run_history_df.empty:
+                        # Prepare table data
+                        run_data = [['Correlation ID', 'Rows', 'Status', 'Started', 'Ended']]
+                        for _, row in run_history_df.iterrows():
+                            run_data.append([
+                                str(row['corr_id'])[:30] + '...' if len(str(row['corr_id'])) > 30 else str(row['corr_id']),
+                                str(row['rows']),
+                                str(row['status']),
+                                str(row['started'])[:19] if pd.notna(row['started']) else 'N/A',
+                                str(row['ended'])[:19] if pd.notna(row['ended']) else 'N/A'
+                            ])
+
+                        run_table = Table(run_data, colWidths=[2*inch, 0.7*inch, 0.9*inch, 1.5*inch, 1.5*inch])
+                        run_table.setStyle(TableStyle([
+                            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3b82f6')),
+                            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('FONTSIZE', (0, 0), (-1, 0), 10),
+                            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                            ('FONTSIZE', (0, 1), (-1, -1), 8),
+                        ]))
+                        elements.append(run_table)
+                    else:
+                        elements.append(Paragraph("No run history available", styles['Normal']))
+
+                    elements.append(Spacer(1, 0.3*inch))
+
+                    # Error Summary Table
+                    elements.append(Paragraph("Error Summary", heading_style))
+                    errors_data = [['Correlation ID', 'Error Type', 'Message', 'Count']]
+                    if latest_corr_id != "N/A":
+                        errors_data.append([latest_corr_id, 'None', 'No errors logged', '0'])
+                    else:
+                        errors_data.append(['N/A', 'N/A', 'No runs detected', '0'])
+
+                    error_table = Table(errors_data, colWidths=[2.5*inch, 1.5*inch, 2*inch, 0.7*inch])
+                    error_table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#ef4444')),
                         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
                         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
@@ -1723,65 +1855,39 @@ def render_reports_tab():
                         ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
                         ('FONTSIZE', (0, 1), (-1, -1), 8),
                     ]))
-                    elements.append(run_table)
-                else:
-                    elements.append(Paragraph("No run history available", styles['Normal']))
+                    elements.append(error_table)
+                    elements.append(Spacer(1, 0.3*inch))
 
-                elements.append(Spacer(1, 0.3*inch))
+                    # Data Quality Metrics
+                    elements.append(Paragraph("Data Quality Metrics", heading_style))
 
-                # Error Summary Table
-                elements.append(Paragraph("Error Summary", heading_style))
-                errors_data = [['Correlation ID', 'Error Type', 'Message', 'Count']]
-                if latest_corr_id != "N/A":
-                    errors_data.append([latest_corr_id, 'None', 'No errors logged', '0'])
-                else:
-                    errors_data.append(['N/A', 'N/A', 'No runs detected', '0'])
+                    df_sample = conn.execute(f"SELECT * FROM {current_db}.gold.crashes LIMIT 1000").fetchdf()
+                    missing_pct = (df_sample.isnull().sum().sum() / (len(df_sample) * len(df_sample.columns)) * 100)
+                    duplicate_count = df_sample.duplicated(subset=['crash_record_id']).sum()
+                    hr_rate = (df_sample['hit_and_run_i'].sum() / len(df_sample) * 100) if 'hit_and_run_i' in df_sample.columns else 0
 
-                error_table = Table(errors_data, colWidths=[2.5*inch, 1.5*inch, 2*inch, 0.7*inch])
-                error_table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#ef4444')),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, 0), 10),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                    ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-                    ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                    ('FONTSIZE', (0, 1), (-1, -1), 8),
-                ]))
-                elements.append(error_table)
-                elements.append(Spacer(1, 0.3*inch))
+                    quality_info = [
+                        ['Metric', 'Value'],
+                        ['Missing Values %', f'{missing_pct:.2f}%'],
+                        ['Duplicate Records', f'{duplicate_count}'],
+                        ['Hit & Run Rate', f'{hr_rate:.2f}%'],
+                        ['Sample Size (for metrics)', f'{len(df_sample):,} rows']
+                    ]
 
-                # Data Quality Metrics
-                elements.append(Paragraph("Data Quality Metrics", heading_style))
-
-                df_sample = conn.execute(f"SELECT * FROM {current_db}.gold.crashes LIMIT 1000").fetchdf()
-                missing_pct = (df_sample.isnull().sum().sum() / (len(df_sample) * len(df_sample.columns)) * 100)
-                duplicate_count = df_sample.duplicated(subset=['crash_record_id']).sum()
-                hr_rate = (df_sample['hit_and_run_i'].sum() / len(df_sample) * 100) if 'hit_and_run_i' in df_sample.columns else 0
-
-                quality_info = [
-                    ['Metric', 'Value'],
-                    ['Missing Values %', f'{missing_pct:.2f}%'],
-                    ['Duplicate Records', f'{duplicate_count}'],
-                    ['Hit & Run Rate', f'{hr_rate:.2f}%'],
-                    ['Sample Size (for metrics)', f'{len(df_sample):,} rows']
-                ]
-
-                quality_table = Table(quality_info, colWidths=[3*inch, 3*inch])
-                quality_table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#10b981')),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, 0), 10),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                    ('BACKGROUND', (0, 1), (-1, -1), colors.lightblue),
-                    ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                ]))
-                elements.append(quality_table)
-
-                conn.close()
+                    quality_table = Table(quality_info, colWidths=[3*inch, 3*inch])
+                    quality_table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#10b981')),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, 0), 10),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                        ('BACKGROUND', (0, 1), (-1, -1), colors.lightblue),
+                        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                    ]))
+                    elements.append(quality_table)
+                finally:
+                    conn.close()
 
                 # Build PDF
                 doc.build(elements)
@@ -1806,19 +1912,513 @@ def render_reports_tab():
         st.info("No data available to generate report")
 
 
+def render_model_tab():
+    st.header("🤖 ML Model - Hit & Run Prediction")
+
+    # Load model metadata from JSON
+    metadata = load_model_metadata(MODEL_METADATA_PATH)
+
+    if metadata is None:
+        st.error("❌ Model metadata not loaded. Cannot display model information.")
+        st.info("Please ensure the metadata file exists at: `artifacts/model_metadata.json`")
+        return
+
+    # =============================================================================
+    # Section 1: Model Summary
+    # =============================================================================
+    st.subheader("📋 Model Summary")
+
+    # Get model info from metadata
+    model_type = metadata.get("model_type", "Unknown")
+    threshold = metadata.get("threshold", 0.5)
+    feature_names = metadata.get("feature_names", [])
+    num_features = len(feature_names)
+
+    # Display model info in columns
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric("Model Type", model_type)
+        st.caption("Machine learning algorithm")
+
+    with col2:
+        st.metric("Number of Features", num_features)
+        st.caption("Input features used for prediction")
+
+    with col3:
+        st.metric("Decision Threshold", f"{threshold:.2f}")
+        st.caption("Probability cutoff for hit-and-run classification")
+
+    st.markdown("---")
+
+    # Expected Input Description
+    st.subheader("📝 Expected Input Features")
+
+    st.markdown(f"""
+    The model expects **{num_features} features** from the crash data.
+
+    ⚠️ **IMPORTANT:**
+    - Pass **raw column values** exactly as they appear in the database
+    - Do **NOT** manually one-hot encode categorical features
+    - Do **NOT** manually scale or normalize numeric features
+    - The model pipeline handles all preprocessing internally
+    """)
+
+    # Display features in a more organized way
+    st.markdown("**Feature List:**")
+
+    # Split features into columns for better display
+    num_cols = 3
+    cols = st.columns(num_cols)
+
+    for idx, feature in enumerate(feature_names):
+        col_idx = idx % num_cols
+        with cols[col_idx]:
+            st.markdown(f"- `{feature}`")
+
+    st.markdown("---")
+
+    st.markdown(f"""
+    **Model Output:**
+    - **Probability score** (0.0 to 1.0) - likelihood of hit-and-run
+    - **Predicted class** (0 or 1) - based on threshold of {threshold:.2f}
+        - Probability ≥ {threshold:.2f} → Predicted as **Hit-and-Run** (1)
+        - Probability < {threshold:.2f} → Predicted as **Not Hit-and-Run** (0)
+    """)
+
+    st.markdown("---")
+
+    # =============================================================================
+    # Section 2: Data Selection
+    # =============================================================================
+    st.subheader("📊 Data Selection")
+
+    # Mode selection
+    data_mode = st.radio(
+        "Select data source for predictions:",
+        options=["Gold Table (DuckDB)", "Test Data Upload (CSV)"],
+        horizontal=True,
+        help="Choose whether to load data from the Gold database or upload a test CSV file"
+    )
+
+    # Initialize session state for storing loaded data
+    if 'model_data' not in st.session_state:
+        st.session_state.model_data = None
+
+    # =============================================================================
+    # Mode 1: Gold Table
+    # =============================================================================
+    if data_mode == "Gold Table (DuckDB)":
+        st.markdown("### Load data from Gold database")
+
+        gold_db_path = os.getenv("GOLD_DB_PATH", "/data/gold/gold.duckdb")
+
+        if not os.path.exists(gold_db_path):
+            st.error("❌ Gold database not found. Please run the data pipeline first.")
+        else:
+            col1, col2 = st.columns(2)
+
+            with col1:
+                # Date filters
+                st.markdown("**Date Range Filter:**")
+                start_date = st.date_input(
+                    "Start Date",
+                    value=pd.to_datetime("2020-01-01"),
+                    help="Filter crashes from this date onwards"
+                )
+                end_date = st.date_input(
+                    "End Date",
+                    value=pd.to_datetime("2020-01-02"),
+                    help="Filter crashes up to this date"
+                )
+
+            with col2:
+                # Row limit
+                st.markdown("**Sample Size:**")
+                max_rows = st.number_input(
+                    "Maximum number of rows to load",
+                    min_value=100,
+                    max_value=50000,
+                    value=5000,
+                    step=500,
+                    help="Limit the number of rows to prevent memory issues"
+                )
+
+            # Load button
+            if st.button("🔍 Load Data from Gold Table", type="primary"):
+                with st.spinner("Loading data from Gold database..."):
+                    try:
+                        conn = get_duckdb_connection(gold_db_path, read_only=True)
+                        if conn is None:
+                            st.error("Failed to connect to database")
+                        else:
+                            try:
+                                current_db = conn.execute("SELECT current_database()").fetchone()[0]
+
+                                # Build query with date filters and row limit
+                                query = f"""
+                                    SELECT *
+                                    FROM {current_db}.gold.crashes
+                                    WHERE crash_date BETWEEN '{start_date}' AND '{end_date}'
+                                    LIMIT {max_rows}
+                                """
+
+                                df = conn.execute(query).fetchdf()
+
+                                if df.empty:
+                                    st.warning("⚠️ No data found for the selected date range.")
+                                    st.session_state.model_data = None
+                                else:
+                                    # Verify that the required features exist
+                                    missing_features = [f for f in feature_names if f not in df.columns]
+
+                                    if missing_features:
+                                        st.error(f"❌ Missing required features in Gold table: {', '.join(missing_features)}")
+                                        st.session_state.model_data = None
+                                    else:
+                                        # Store data in session state
+                                        st.session_state.model_data = df
+                                        st.success(f"✅ Loaded {len(df):,} rows from Gold table")
+
+                            finally:
+                                conn.close()
+
+                    except Exception as e:
+                        st.error(f"Error loading data: {str(e)}")
+                        st.session_state.model_data = None
+
+    # =============================================================================
+    # Mode 2: Test Data Upload
+    # =============================================================================
+    else:  # Test Data Upload (CSV)
+        st.markdown("### Upload test data file")
+
+        uploaded_file = st.file_uploader(
+            "Choose a CSV file",
+            type=["csv"],
+            help="Upload a CSV file containing test data with the same features as training data"
+        )
+
+        if uploaded_file is not None:
+            # Validate file extension
+            file_name = uploaded_file.name
+            if not file_name.lower().endswith('.csv'):
+                st.error("❌ Invalid file type. Only CSV files (.csv) are allowed.")
+                st.session_state.model_data = None
+            else:
+                try:
+                    # Load the CSV file
+                    df = pd.read_csv(uploaded_file)
+
+                    # Validate that required features exist
+                    missing_features = [f for f in feature_names if f not in df.columns]
+
+                    if missing_features:
+                        st.error(f"❌ Missing required features in uploaded file:")
+                        st.error(f"Missing columns: {', '.join(missing_features)}")
+                        st.info(f"Expected {len(feature_names)} features. Please ensure your CSV contains all required columns.")
+                        st.session_state.model_data = None
+                    else:
+                        # Store data in session state
+                        st.session_state.model_data = df
+                        st.success(f"✅ File uploaded successfully: {file_name}")
+                        st.success(f"✅ Loaded {len(df):,} rows with all required features")
+
+                except Exception as e:
+                    st.error(f"❌ Error reading CSV file: {str(e)}")
+                    st.session_state.model_data = None
+        else:
+            st.info("📤 Please upload a CSV file to continue")
+            st.session_state.model_data = None
+
+    # =============================================================================
+    # Display loaded data preview
+    # =============================================================================
+    if st.session_state.model_data is not None:
+        st.markdown("---")
+        st.subheader("📋 Data Preview")
+
+        df = st.session_state.model_data
+
+        # Display metrics
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.metric("Total Rows", f"{len(df):,}")
+
+        with col2:
+            st.metric("Total Columns", f"{len(df.columns):,}")
+
+        with col3:
+            # Check if target column exists for info
+            if 'hit_and_run_i' in df.columns:
+                hr_rate = (df['hit_and_run_i'].sum() / len(df) * 100)
+                st.metric("Hit & Run Rate", f"{hr_rate:.2f}%")
+            else:
+                st.metric("Features Available", "✓")
+
+        # Show preview of the data
+        st.markdown("**First 10 rows:**")
+        st.dataframe(df.head(10), use_container_width=True)
+
+        # Show feature columns that will be used for prediction
+        with st.expander("🔍 Feature Columns (for prediction)"):
+            available_features = [f for f in feature_names if f in df.columns]
+            st.write(f"Available: {len(available_features)} / {len(feature_names)} features")
+
+            # Display in columns
+            cols = st.columns(3)
+            for idx, feature in enumerate(available_features):
+                col_idx = idx % 3
+                with cols[col_idx]:
+                    st.markdown(f"✓ `{feature}`")
+
+    st.markdown("---")
+
+    # =============================================================================
+    # Section 3: Prediction & Metrics
+    # =============================================================================
+    if st.session_state.model_data is not None:
+        st.subheader("🎯 Predictions & Model Performance")
+
+        # Initialize session state for predictions
+        if 'predictions' not in st.session_state:
+            st.session_state.predictions = None
+        if 'probabilities' not in st.session_state:
+            st.session_state.probabilities = None
+
+        # Run Predictions Button
+        if st.button("🚀 Run Predictions", type="primary", use_container_width=True):
+            with st.spinner("Running model predictions..."):
+                try:
+                    # Load the model
+                    model = load_model(MODEL_ARTIFACT_PATH)
+                    if model is None:
+                        st.error("❌ Failed to load model. Cannot run predictions.")
+                    else:
+                        # Get the data
+                        df = st.session_state.model_data
+
+                        # Extract feature columns
+                        X = df[feature_names]
+
+                        # Run predictions
+                        probabilities = model.predict_proba(X)[:, 1]  # Probability of class 1 (hit-and-run)
+                        predictions = (probabilities >= threshold).astype(int)
+
+                        # Store in session state
+                        st.session_state.probabilities = probabilities
+                        st.session_state.predictions = predictions
+
+                        st.success(f"✅ Predictions complete! Scored {len(predictions):,} rows")
+
+                except Exception as e:
+                    st.error(f"❌ Error running predictions: {str(e)}")
+                    st.session_state.predictions = None
+                    st.session_state.probabilities = None
+
+        # Display results if predictions have been run
+        if st.session_state.predictions is not None:
+            st.markdown("---")
+
+            # Get test metrics from metadata
+            test_metrics = metadata.get("test_metrics", {})
+
+            # =================================================================
+            # Static Metrics (from training)
+            # =================================================================
+            st.markdown("### 📊 Static Metrics (Test Set from Training)")
+            st.caption("Official metrics from the held-out test set during model training")
+
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                precision_static = test_metrics.get("precision", 0.0)
+                st.metric("Precision", f"{precision_static:.1%}")
+                st.caption("Of predicted hit-and-runs, what % were correct?")
+
+            with col2:
+                recall_static = test_metrics.get("recal", test_metrics.get("recall", 0.0))
+                st.metric("Recall", f"{recall_static:.1%}")
+                st.caption("Of actual hit-and-runs, what % did we catch?")
+
+            with col3:
+                f1_static = test_metrics.get("f1", 0.0)
+                st.metric("F1 Score", f"{f1_static:.1%}")
+                st.caption("Harmonic mean of precision and recall")
+
+            with col4:
+                st.metric("Threshold", f"{threshold:.2f}")
+                st.caption("Decision boundary for classification")
+
+            st.markdown("---")
+
+            # =================================================================
+            # Live Metrics (computed on loaded data)
+            # =================================================================
+            st.markdown("### 📈 Live Metrics (Current Data)")
+            st.caption("Metrics computed on the data you just loaded")
+
+            df = st.session_state.model_data
+            predictions = st.session_state.predictions
+            probabilities = st.session_state.probabilities
+
+            # Check if we have ground truth labels
+            has_labels = 'hit_and_run_i' in df.columns
+
+            if has_labels:
+                # Compute live metrics
+                from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+
+                y_true = df['hit_and_run_i'].values
+                y_pred = predictions
+
+                accuracy = accuracy_score(y_true, y_pred)
+                precision_live = precision_score(y_true, y_pred, zero_division=0)
+                recall_live = recall_score(y_true, y_pred, zero_division=0)
+                f1_live = f1_score(y_true, y_pred, zero_division=0)
+                cm = confusion_matrix(y_true, y_pred)
+
+                # Display live metrics
+                col1, col2, col3, col4 = st.columns(4)
+
+                with col1:
+                    st.metric("Accuracy", f"{accuracy:.1%}")
+
+                with col2:
+                    st.metric("Precision", f"{precision_live:.1%}")
+
+                with col3:
+                    st.metric("Recall", f"{recall_live:.1%}")
+
+                with col4:
+                    st.metric("F1 Score", f"{f1_live:.1%}")
+
+                # Confusion Matrix
+                st.markdown("**Confusion Matrix:**")
+
+                col1, col2 = st.columns([1, 1])
+
+                with col1:
+                    # Create confusion matrix display
+                    cm_df = pd.DataFrame(
+                        cm,
+                        index=['Actual: Not H&R (0)', 'Actual: H&R (1)'],
+                        columns=['Predicted: Not H&R (0)', 'Predicted: H&R (1)']
+                    )
+                    st.dataframe(cm_df, use_container_width=True)
+
+                with col2:
+                    # Show interpretation
+                    tn, fp, fn, tp = cm.ravel()
+                    st.markdown(f"""
+                    **Breakdown:**
+                    - ✅ True Negatives: {tn:,} (Correctly predicted as NOT hit-and-run)
+                    - ❌ False Positives: {fp:,} (Incorrectly predicted as hit-and-run)
+                    - ❌ False Negatives: {fn:,} (Missed hit-and-runs)
+                    - ✅ True Positives: {tp:,} (Correctly caught hit-and-runs)
+                    """)
+
+            else:
+                # No ground truth - just show prediction distribution
+                st.info("ℹ️ No ground truth labels found. Showing prediction distribution only.")
+
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    total_predictions = len(predictions)
+                    st.metric("Total Predictions", f"{total_predictions:,}")
+
+                with col2:
+                    predicted_hr = predictions.sum()
+                    st.metric("Predicted Hit & Run", f"{predicted_hr:,}")
+                    st.caption(f"{predicted_hr/total_predictions:.1%} of total")
+
+                with col3:
+                    predicted_not_hr = total_predictions - predicted_hr
+                    st.metric("Predicted NOT Hit & Run", f"{predicted_not_hr:,}")
+                    st.caption(f"{predicted_not_hr/total_predictions:.1%} of total")
+
+            st.markdown("---")
+
+            # =================================================================
+            # Prediction Distribution
+            # =================================================================
+            st.markdown("### 📊 Prediction Distribution")
+
+            # Probability distribution histogram
+            import plotly.graph_objects as go
+
+            fig = go.Figure()
+            fig.add_trace(go.Histogram(
+                x=probabilities,
+                nbinsx=50,
+                name='Probability Distribution',
+                marker_color='steelblue'
+            ))
+
+            # Add threshold line
+            fig.add_vline(
+                x=threshold,
+                line_dash="dash",
+                line_color="red",
+                annotation_text=f"Threshold ({threshold:.2f})",
+                annotation_position="top right"
+            )
+
+            fig.update_layout(
+                title="Distribution of Predicted Probabilities",
+                xaxis_title="Predicted Probability of Hit-and-Run",
+                yaxis_title="Count",
+                showlegend=False,
+                height=400
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+
+            # =================================================================
+            # Download Predictions
+            # =================================================================
+            st.markdown("### 💾 Download Results")
+
+            # Add predictions to dataframe
+            results_df = df.copy()
+            results_df['predicted_probability'] = probabilities
+            results_df['predicted_class'] = predictions
+
+            # Convert to CSV
+            csv = results_df.to_csv(index=False)
+
+            st.download_button(
+                label="📥 Download Predictions as CSV",
+                data=csv,
+                file_name=f"predictions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+
+            st.caption(f"Downloading {len(results_df):,} rows with predictions and probabilities")
+
+    else:
+        st.info("👆 Please load data in Section 2 above to run predictions")
+
+    st.markdown("---")
+
+
 def main():
     # with st.sidebar:
     #     st.title("Navigation")
     #     st.markdown("---")
     #     st.info("**Quick Tips:**\n- Check container health first\n- Use Data Fetcher to load data")
     
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "Home",
         "Data Management",
         "Data Fetcher",
         "Scheduler",
         "EDA",
-        "Reports"
+        "Reports",
+        "Model"
     ])
     
     with tab1:
@@ -1833,6 +2433,8 @@ def main():
         render_eda_tab()
     with tab6:
         render_reports_tab()
+    with tab7:
+        render_model_tab()
 
 if __name__ == "__main__":
     main()
