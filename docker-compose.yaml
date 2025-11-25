@@ -26,6 +26,7 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_PASS}
+      MINIO_PROMETHEUS_AUTH_TYPE: public
     command: server /data --console-address ":9001"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
@@ -38,6 +39,8 @@ services:
     build: ./extractor
     container_name: extractor
     env_file: .env
+    ports:
+      - "8001:8000"  # Prometheus metrics endpoint
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -83,4 +86,39 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    user: "${UID}:${GID}" 
+    ports:
+      - "9090:9090"   # Prometheus UI
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus_data:/prometheus
+    restart: unless-stopped 
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    user: "${UID}:${GID}" 
+    ports:
+      - "3000:3000"   # Grafana UI
+    volumes:
+      - ./grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  rabbitmq-exporter:
+    image: kbudde/rabbitmq-exporter
+    ports:
+      - "9419:9419"
+    environment:
+      RABBIT_URL: http://rabbitmq:15672
+      RABBIT_USER: guest
+      RABBIT_PASSWORD: guest
+    depends_on:
+      - rabbitmq
     restart: unless-stopped

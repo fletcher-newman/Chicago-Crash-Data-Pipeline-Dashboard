@@ -24,6 +24,89 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+import "github.com/prometheus/client_golang/prometheus"
+import "github.com/prometheus/client_golang/prometheus/promhttp"
+
+// =============================
+// Prometheus Metrics
+// =============================
+
+var (
+	// Service uptime (when the service started)
+	extractorUptime = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "extractor_uptime_seconds",
+		Help: "Time in seconds since the extractor service started",
+	})
+
+	// Job counters
+	jobsProcessedTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "extractor_jobs_processed_total",
+		Help: "Total number of extraction jobs processed",
+	})
+
+	jobsSuccessTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "extractor_jobs_success_total",
+		Help: "Total number of successful extraction jobs",
+	})
+
+	jobsFailedTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "extractor_jobs_failed_total",
+		Help: "Total number of failed extraction jobs",
+	})
+
+	// Rows processed
+	rowsFetchedTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "extractor_rows_fetched_total",
+		Help: "Total number of rows fetched from Socrata API",
+	})
+
+	rowsWrittenTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "extractor_rows_written_total",
+		Help: "Total number of rows written to MinIO",
+	})
+
+	// Job duration histogram
+	jobDurationSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "extractor_job_duration_seconds",
+		Help:    "Time spent processing a complete extraction job",
+		Buckets: prometheus.DefBuckets, // [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]
+	})
+
+	// API fetch duration
+	apiFetchDurationSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "extractor_api_fetch_duration_seconds",
+		Help:    "Time spent fetching data from Socrata API",
+		Buckets: []float64{0.1, 0.5, 1, 2, 5, 10, 30},
+	})
+
+	// MinIO write duration
+	minioWriteDurationSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "extractor_minio_write_duration_seconds",
+		Help:    "Time spent writing data to MinIO",
+		Buckets: []float64{0.01, 0.05, 0.1, 0.5, 1, 2},
+	})
+
+	// Current state gauge
+	currentJobsInProgress = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "extractor_jobs_in_progress",
+		Help: "Number of extraction jobs currently being processed",
+	})
+)
+
+func init() {
+	// Register all metrics with Prometheus
+	prometheus.MustRegister(extractorUptime)
+	prometheus.MustRegister(jobsProcessedTotal)
+	prometheus.MustRegister(jobsSuccessTotal)
+	prometheus.MustRegister(jobsFailedTotal)
+	prometheus.MustRegister(rowsFetchedTotal)
+	prometheus.MustRegister(rowsWrittenTotal)
+	prometheus.MustRegister(jobDurationSeconds)
+	prometheus.MustRegister(apiFetchDurationSeconds)
+	prometheus.MustRegister(minioWriteDurationSeconds)
+	prometheus.MustRegister(currentJobsInProgress)
+}
+
 // =============================
 // Types — Job spec (Section 2)
 // =============================
@@ -257,6 +340,12 @@ func httpGetJSON(env Env, fullURL string) ([]byte, error) {
 // =============================
 
 func putJSONGZ(cli *minio.Client, env Env, key string, raw []byte, meta map[string]string) error {
+	start := time.Now()
+	defer func() {
+		// Track MinIO write duration
+		minioWriteDurationSeconds.Observe(time.Since(start).Seconds())
+	}()
+
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	_, err := gz.Write(raw)
@@ -266,6 +355,13 @@ func putJSONGZ(cli *minio.Client, env Env, key string, raw []byte, meta map[stri
 	if err := gz.Close(); err != nil {
 		return err
 	}
+
+	// Count rows written (parse JSON to get row count)
+	var arr []map[string]any
+	if err := json.Unmarshal(raw, &arr); err == nil {
+		rowsWrittenTotal.Add(float64(len(arr)))
+	}
+
 	reader := bytes.NewReader(buf.Bytes())
 	_, err = cli.PutObject(context.Background(), env.RawBucket, key, reader, int64(reader.Len()), minio.PutObjectOptions{
 		ContentType:     "application/json",
@@ -618,6 +714,12 @@ func (j *Job) EnrichByAlias(alias string) *DatasetSpec {
 }
 
 func fetchCrashesPage(env Env, job Job, offset int) (rows int, crashIDs []string, body []byte, maxUpdated time.Time, err error) {
+	start := time.Now()
+	defer func() {
+		// Track API fetch duration
+		apiFetchDurationSeconds.Observe(time.Since(start).Seconds())
+	}()
+
 	q := url.Values{}
 	// Ensure join key + crash_date are present so we can build ID list + year map (NEW)
 	sel := defaultStr(job.Primary.Select, "*")
@@ -645,6 +747,9 @@ func fetchCrashesPage(env Env, job Job, offset int) (rows int, crashIDs []string
 	rows = len(arr)
 	ids := make([]string, 0, rows)
 	var maxT time.Time
+
+	// Track rows fetched
+	rowsFetchedTotal.Add(float64(rows))
 
 	for _, r := range arr {
 		// collect join keys
@@ -881,6 +986,25 @@ func publishTransformJob(amqpURL string, job TransformJob) error {
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+
+	// Start metrics HTTP server
+	startTime := time.Now()
+	go func() {
+		http.Handle("/metrics", promhttp.Handler())
+		log.Println("Metrics server listening on :8000")
+		if err := http.ListenAndServe(":8000", nil); err != nil {
+			log.Fatalf("Failed to start metrics server: %v", err)
+		}
+	}()
+
+	// Update uptime gauge every 10 seconds
+	go func() {
+		for {
+			extractorUptime.Set(time.Since(startTime).Seconds())
+			time.Sleep(10 * time.Second)
+		}
+	}()
+
 	env := getEnv()
 	mcli := newMinio(env)
 
@@ -907,14 +1031,23 @@ func main() {
 	log.Printf("Extractor up. Waiting for jobs on queue %q", qName)
 	for d := range msgs {
 		start := time.Now()
+
+		// Track job in progress
+		currentJobsInProgress.Inc()
+		jobsProcessedTotal.Inc()
+
 		var job Job
 		if err := json.Unmarshal(d.Body, &job); err != nil {
 			log.Printf("bad job json: %v", err)
+			jobsFailedTotal.Inc()
+			currentJobsInProgress.Dec()
 			d.Ack(false)
 			continue
 		}
 		if job.Primary.ID == "" {
 			log.Printf("job missing primary.id")
+			jobsFailedTotal.Inc()
+			currentJobsInProgress.Dec()
 			d.Ack(false)
 			continue
 		}
@@ -923,10 +1056,17 @@ func main() {
 		}
 
 		corr, wroteAny, err := processJob(env, mcli, job)
+
+		// Record job duration
+		duration := time.Since(start).Seconds()
+		jobDurationSeconds.Observe(duration)
+
 		if err != nil {
 			log.Printf("job failed: %v", err)
+			jobsFailedTotal.Inc()
 		} else {
 			log.Printf("job done in %s (corr=%s, wroteAny=%v)", time.Since(start), corr, wroteAny)
+			jobsSuccessTotal.Inc()
 
 			// Write manifest for lineage (even if no clean published)
 			if corr != "" {
@@ -953,6 +1093,7 @@ func main() {
 			}
 		}
 
+		currentJobsInProgress.Dec()
 		d.Ack(false)
 	}
 }
