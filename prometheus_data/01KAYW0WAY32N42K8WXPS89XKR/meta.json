@@ -1,0 +1,18 @@
+{
+	"ulid": "01KAYW0WAY32N42K8WXPS89XKR",
+	"minTime": 1764109296630,
+	"maxTime": 1764115200000,
+	"stats": {
+		"numSamples": 302103,
+		"numFloatSamples": 302103,
+		"numSeries": 383,
+		"numChunks": 2332
+	},
+	"compaction": {
+		"level": 1,
+		"sources": [
+			"01KAYW0WAY32N42K8WXPS89XKR"
+		]
+	},
+	"version": 1
+}

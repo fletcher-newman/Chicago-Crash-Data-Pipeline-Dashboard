@@ -1,0 +1,18 @@
+{
+	"ulid": "01KB06BWM4TTXQ669T08Q1ZKQ4",
+	"minTime": 1764153510738,
+	"maxTime": 1764158400000,
+	"stats": {
+		"numSamples": 17257,
+		"numFloatSamples": 17257,
+		"numSeries": 654,
+		"numChunks": 654
+	},
+	"compaction": {
+		"level": 1,
+		"sources": [
+			"01KB06BWM4TTXQ669T08Q1ZKQ4"
+		]
+	},
+	"version": 1
+}

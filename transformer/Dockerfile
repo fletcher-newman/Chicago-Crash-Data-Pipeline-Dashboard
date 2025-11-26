@@ -12,5 +12,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the transformer code into the image
 COPY . ./
 
+# Expose metrics port
+EXPOSE 8000
+
 # Default command
 CMD ["python", "transformer.py"]

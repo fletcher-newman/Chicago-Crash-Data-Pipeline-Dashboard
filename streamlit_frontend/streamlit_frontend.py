@@ -9,22 +9,65 @@ from scheduler_tab import scheduler_tab
 # import pickle
 import joblib
 import xgboost
+import time
+import sys
+import os
+from threading import Thread
+
+# Prometheus multiprocess mode setup (must be done before importing metrics)
+# The PROMETHEUS_MULTIPROC_DIR environment variable is set in the Dockerfile startup script
+if 'PROMETHEUS_MULTIPROC_DIR' in os.environ:
+    print(f"[Streamlit] Using Prometheus multiprocess mode: {os.environ['PROMETHEUS_MULTIPROC_DIR']}")
+
+# Prometheus metrics
+from prometheus_client import start_http_server
+
+# Import metrics definitions (shared with metrics server)
+from metrics_definitions import (
+    streamlit_uptime,
+    model_accuracy,
+    model_precision,
+    model_recall,
+    model_f1_score,
+    predictions_total,
+    prediction_latency_seconds,
+    db_queries_total,
+    rows_loaded_total,
+    model_load_duration_seconds,
+    tab_views_total,
+    page_loads_total
+)
 
 # Configuration
-import os
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000/api")
 
 # Model artifact paths
 MODEL_ARTIFACT_PATH = "artifacts/model.pkl"
 MODEL_METADATA_PATH = "artifacts/model_metadata.json"
 
-# Page configuration
+# Page configuration (must be first st command)
 st.set_page_config(
     page_title="Chicago Crash ETL Dashboard",
     # page_icon="🚦",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+@st.cache_resource
+def start_uptime_tracking():
+    """Start uptime tracking thread (cached to run only once)"""
+    start_time = time.time()
+    def update_uptime():
+        while True:
+            streamlit_uptime.set(time.time() - start_time)
+            time.sleep(10)
+
+    uptime_thread = Thread(target=update_uptime, daemon=True)
+    uptime_thread.start()
+    return True
+
+# Initialize uptime tracking
+_ = start_uptime_tracking()
 
 @st.cache_resource
 def load_model(model_path: str):
@@ -37,6 +80,7 @@ def load_model(model_path: str):
     Returns:
         The loaded model object, or None if loading fails
     """
+    start = time.time()
     try:
         import sklearn.compose
         import sklearn.preprocessing
@@ -44,6 +88,9 @@ def load_model(model_path: str):
         # with open(model_path, 'rb') as f:
         #     model = pickle.load(f)
         model = joblib.load(model_path)
+
+        # Track model load duration
+        model_load_duration_seconds.observe(time.time() - start)
         return model
     except FileNotFoundError:
         st.error(f"❌ Model file not found at: {model_path}")
@@ -75,6 +122,32 @@ def load_model_metadata(metadata_path: str):
     except Exception as e:
         st.error(f"❌ Failed to load model metadata: {str(e)}")
         return None
+
+def update_model_metrics(metadata):
+    """
+    Update Prometheus metrics from model metadata.
+    This function is NOT cached so metrics update on every call.
+
+    Args:
+        metadata: Dictionary containing model metadata
+    """
+    if metadata and 'test_metrics' in metadata:
+        test_metrics = metadata['test_metrics']
+        # Handle different field name variations in metadata
+        if 'accuracy' in test_metrics:
+            model_accuracy.set(test_metrics['accuracy'])
+        if 'precision' in test_metrics:
+            model_precision.set(test_metrics['precision'])
+        # Handle 'recall' or 'recal' (typo in metadata)
+        if 'recall' in test_metrics:
+            model_recall.set(test_metrics['recall'])
+        elif 'recal' in test_metrics:
+            model_recall.set(test_metrics['recal'])
+        # Handle 'f1_score' or 'f1'
+        if 'f1_score' in test_metrics:
+            model_f1_score.set(test_metrics['f1_score'])
+        elif 'f1' in test_metrics:
+            model_f1_score.set(test_metrics['f1'])
 
 def get_duckdb_connection(db_path: str, read_only: bool = True):
     """
@@ -2063,7 +2136,13 @@ def render_model_tab():
                                     LIMIT {max_rows}
                                 """
 
+                                # Track database query
+                                db_queries_total.inc()
                                 df = conn.execute(query).fetchdf()
+
+                                # Track rows loaded
+                                if not df.empty:
+                                    rows_loaded_total.inc(len(df))
 
                                 if df.empty:
                                     st.warning("⚠️ No data found for the selected date range.")
@@ -2202,9 +2281,15 @@ def render_model_tab():
                         # Extract feature columns
                         X = df[feature_names]
 
-                        # Run predictions
+                        # Run predictions and track metrics
+                        pred_start = time.time()
                         probabilities = model.predict_proba(X)[:, 1]  # Probability of class 1 (hit-and-run)
                         predictions = (probabilities >= threshold).astype(int)
+                        pred_duration = time.time() - pred_start
+
+                        # Track prediction metrics
+                        prediction_latency_seconds.observe(pred_duration)
+                        predictions_total.inc(len(predictions))
 
                         # Store in session state
                         st.session_state.probabilities = probabilities
@@ -2406,11 +2491,19 @@ def render_model_tab():
 
 
 def main():
+    # Track page load
+    page_loads_total.inc()
+
+    # Load model metadata and update Prometheus metrics
+    # Metadata loading is cached, but metrics update on every page load
+    metadata = load_model_metadata(MODEL_METADATA_PATH)
+    update_model_metrics(metadata)
+
     # with st.sidebar:
     #     st.title("Navigation")
     #     st.markdown("---")
     #     st.info("**Quick Tips:**\n- Check container health first\n- Use Data Fetcher to load data")
-    
+
     tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "Home",
         "Data Management",
@@ -2420,20 +2513,27 @@ def main():
         "Reports",
         "Model"
     ])
-    
+
     with tab1:
+        tab_views_total.labels(tab_name='home').inc()
         render_home_tab()
     with tab2:
+        tab_views_total.labels(tab_name='data_management').inc()
         render_data_management_tab()
     with tab3:
+        tab_views_total.labels(tab_name='data_fetcher').inc()
         render_data_fetcher_tab()
     with tab4:
+        tab_views_total.labels(tab_name='scheduler').inc()
         scheduler_tab()
     with tab5:
+        tab_views_total.labels(tab_name='eda').inc()
         render_eda_tab()
     with tab6:
+        tab_views_total.labels(tab_name='reports').inc()
         render_reports_tab()
     with tab7:
+        tab_views_total.labels(tab_name='model').inc()
         render_model_tab()
 
 if __name__ == "__main__":

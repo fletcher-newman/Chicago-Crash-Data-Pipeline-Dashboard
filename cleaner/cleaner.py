@@ -6,9 +6,13 @@ import time
 import random
 import socket
 import traceback
+from threading import Thread
 
 import pika
 from pika.exceptions import AMQPConnectionError, ProbableAccessDeniedError, ProbableAuthenticationError
+
+# Prometheus metrics
+from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
 from cleaning_rules import clean_data
 from duckdb_writer import write_to_gold
@@ -18,6 +22,75 @@ from duckdb_writer import write_to_gold
 # ---------------------------------
 logging.basicConfig(level=logging.INFO, format="[cleaner] %(message)s")
 logging.getLogger("pika").setLevel(logging.WARNING)
+
+# ---------------------------------
+# Prometheus Metrics
+# ---------------------------------
+# Service uptime
+cleaner_uptime = Gauge(
+    'cleaner_uptime_seconds',
+    'Time in seconds since the cleaner service started'
+)
+
+# Job counters
+jobs_processed_total = Counter(
+    'cleaner_jobs_processed_total',
+    'Total number of cleaning jobs processed'
+)
+
+jobs_success_total = Counter(
+    'cleaner_jobs_success_total',
+    'Total number of successful cleaning jobs'
+)
+
+jobs_failed_total = Counter(
+    'cleaner_jobs_failed_total',
+    'Total number of failed cleaning jobs'
+)
+
+# Rows processed
+rows_read_total = Counter(
+    'cleaner_rows_read_total',
+    'Total number of rows read from transformed data'
+)
+
+rows_written_total = Counter(
+    'cleaner_rows_written_total',
+    'Total number of rows written to Gold database'
+)
+
+# Job duration
+job_duration_seconds = Histogram(
+    'cleaner_job_duration_seconds',
+    'Time spent processing a complete cleaning job',
+    buckets=[0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120]
+)
+
+# Cleaning operation duration
+cleaning_duration_seconds = Histogram(
+    'cleaner_cleaning_duration_seconds',
+    'Time spent cleaning data',
+    buckets=[0.1, 0.5, 1, 2, 5, 10, 30]
+)
+
+# DuckDB write duration
+duckdb_write_duration_seconds = Histogram(
+    'cleaner_duckdb_write_duration_seconds',
+    'Time spent writing data to DuckDB',
+    buckets=[0.01, 0.05, 0.1, 0.5, 1, 2, 5]
+)
+
+# Current state
+current_jobs_in_progress = Gauge(
+    'cleaner_jobs_in_progress',
+    'Number of cleaning jobs currently being processed'
+)
+
+# Last success timestamp (Unix time)
+last_success_timestamp = Gauge(
+    'cleaner_last_success_timestamp_seconds',
+    'Unix timestamp of the last successful cleaning job'
+)
 
 # ---------------------------------
 # Configuration from Environment
@@ -98,10 +171,21 @@ def process_clean_job(msg: dict) -> None:
     logging.info(f"========================================")
 
     # Step 1: Clean the data
+    clean_start = time.time()
     cleaned_df = clean_data(corr_id)
+    cleaning_duration_seconds.observe(time.time() - clean_start)
+
+    # Track rows read
+    rows_read_total.inc(len(cleaned_df))
 
     # Step 2: Write to Gold
+    write_start = time.time()
     stats = write_to_gold(cleaned_df, corr_id, db_path)
+    duckdb_write_duration_seconds.observe(time.time() - write_start)
+
+    # Track rows written
+    if 'inserted' in stats:
+        rows_written_total.inc(stats['inserted'])
 
     # Step 3: Log results
     # logging.info(f"========================================")
@@ -174,6 +258,12 @@ def start_consumer():
             properties: Message properties
             body: Message body (bytes)
         """
+        start = time.time()
+
+        # Track job in progress
+        current_jobs_in_progress.inc()
+        jobs_processed_total.inc()
+
         try:
             # Parse message
             msg = json.loads(body.decode("utf-8"))
@@ -182,11 +272,21 @@ def start_consumer():
             # Validate message type
             if msg_type != "clean":
                 logging.warning(f"Ignoring message with type={msg_type!r}")
+                jobs_failed_total.inc()
+                current_jobs_in_progress.dec()
                 channel.basic_ack(delivery_tag=method.delivery_tag)
                 return
 
             # Process the clean job
             process_clean_job(msg)
+
+            # Track success
+            jobs_success_total.inc()
+
+            # --- ADD THIS LINE ---
+            # Set the gauge to the current Unix timestamp
+            last_success_timestamp.set_to_current_time() 
+            # ---------------------
 
             # ACK the message (success)
             channel.basic_ack(delivery_tag=method.delivery_tag)
@@ -197,9 +297,18 @@ def start_consumer():
             logging.error(f"Error processing message: {e}")
             logging.error(traceback.format_exc())
 
+            # Track failure
+            jobs_failed_total.inc()
+
             # NACK the message (failure, don't requeue to avoid loops)
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             logging.error("Message not acknowledged (NACK, no requeue)")
+
+        finally:
+            # Record job duration and decrement in-progress counter
+            duration = time.time() - start
+            job_duration_seconds.observe(duration)
+            current_jobs_in_progress.dec()
 
     # Start consuming
     logging.info(f"Listening for messages on queue '{CLEAN_QUEUE}'...")
@@ -225,6 +334,20 @@ def start_consumer():
 # Main Entry Point
 # ---------------------------------
 if __name__ == "__main__":
+    # Start Prometheus metrics HTTP server
+    start_http_server(8000)
+    logging.info("Metrics server listening on :8000")
+
+    # Start uptime tracking thread
+    start_time = time.time()
+    def update_uptime():
+        while True:
+            cleaner_uptime.set(time.time() - start_time)
+            time.sleep(10)
+
+    uptime_thread = Thread(target=update_uptime, daemon=True)
+    uptime_thread.start()
+
     try:
         start_consumer()
     except Exception as e:

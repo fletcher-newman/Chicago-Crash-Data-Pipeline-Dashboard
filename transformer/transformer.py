@@ -9,17 +9,83 @@ import time
 import random
 import traceback
 from typing import List, Dict, Any
+from threading import Thread
 
 import pika
 from minio import Minio
 from minio.error import S3Error
 import polars as pl
 
+# Prometheus metrics
+from prometheus_client import Counter, Gauge, Histogram, start_http_server
+
 # ---------------------------------
 # Logging
 # ---------------------------------
 logging.basicConfig(level=logging.INFO, format="[transformer] %(message)s")
 logging.getLogger("pika").setLevel(logging.WARNING)
+
+# ---------------------------------
+# Prometheus Metrics
+# ---------------------------------
+# Service uptime
+transformer_uptime = Gauge(
+    'transformer_uptime_seconds',
+    'Time in seconds since the transformer service started'
+)
+
+# Job counters
+jobs_processed_total = Counter(
+    'transformer_jobs_processed_total',
+    'Total number of transformation jobs processed'
+)
+
+jobs_success_total = Counter(
+    'transformer_jobs_success_total',
+    'Total number of successful transformation jobs'
+)
+
+jobs_failed_total = Counter(
+    'transformer_jobs_failed_total',
+    'Total number of failed transformation jobs'
+)
+
+# Rows processed
+rows_read_total = Counter(
+    'transformer_rows_read_total',
+    'Total number of rows read from raw data'
+)
+
+rows_written_total = Counter(
+    'transformer_rows_written_total',
+    'Total number of rows written to transformed data'
+)
+
+# Job duration
+job_duration_seconds = Histogram(
+    'transformer_job_duration_seconds',
+    'Time spent processing a complete transformation job',
+    buckets=[0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120]
+)
+
+# MinIO operations duration
+minio_read_duration_seconds = Histogram(
+    'transformer_minio_read_duration_seconds',
+    'Time spent reading data from MinIO',
+    buckets=[0.01, 0.05, 0.1, 0.5, 1, 2, 5]
+)
+
+minio_write_duration_seconds = Histogram(
+    'transformer_minio_write_duration_seconds',
+    'Time spent writing data to MinIO',
+    buckets=[0.01, 0.05, 0.1, 0.5, 1, 2, 5]
+)
+
+# Current state
+current_jobs_in_progress = Gauge(
+    'transformer_jobs_in_progress',
+    'Number of transformation jobs currently being processed'
+)
 
 # ---------------------------------
 # Env / Config (fail fast; no silent fallbacks)
@@ -356,11 +422,19 @@ def start_consumer():
     ch.basic_qos(prefetch_count=1)
 
     def on_msg(chx, method, props, body):
+        start = time.time()
+
+        # Track job in progress
+        current_jobs_in_progress.inc()
+        jobs_processed_total.inc()
+
         try:
             msg = json.loads(body.decode("utf-8"))
             mtype = msg.get("type", "")
             if mtype not in ("transform", "clean"):
                 logging.info(f"ignoring message type={mtype!r}")
+                jobs_failed_total.inc()
+                current_jobs_in_progress.dec()
                 chx.basic_ack(delivery_tag=method.delivery_tag)
                 return
 
@@ -375,10 +449,20 @@ def start_consumer():
             prefix = "crash"
             publish_clean_job(chx, corr_id, xform_bucket, prefix)
 
+            # Track success
+            jobs_success_total.inc()
             chx.basic_ack(delivery_tag=method.delivery_tag)
+
         except Exception:
             traceback.print_exc()
+            jobs_failed_total.inc()
             chx.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
+        finally:
+            # Record job duration and decrement in-progress counter
+            duration = time.time() - start
+            job_duration_seconds.observe(duration)
+            current_jobs_in_progress.dec()
 
     logging.info(f"Up. Waiting for jobs on queue '{TRANSFORM_QUEUE}'")
     ch.basic_consume(queue=TRANSFORM_QUEUE, on_message_callback=on_msg)
@@ -391,4 +475,18 @@ def start_consumer():
         except Exception: pass
 
 if __name__ == "__main__":
+    # Start Prometheus metrics HTTP server
+    start_http_server(8000)
+    logging.info("Metrics server listening on :8000")
+
+    # Start uptime tracking thread
+    start_time = time.time()
+    def update_uptime():
+        while True:
+            transformer_uptime.set(time.time() - start_time)
+            time.sleep(10)
+
+    uptime_thread = Thread(target=update_uptime, daemon=True)
+    uptime_thread.start()
+
     start_consumer()

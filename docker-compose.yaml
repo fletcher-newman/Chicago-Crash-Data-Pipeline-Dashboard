@@ -52,6 +52,8 @@ services:
     build: ./transformer
     container_name: transformer
     env_file: .env
+    ports:
+      - "8002:8000"  # Prometheus metrics endpoint
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -63,6 +65,8 @@ services:
     build: ./cleaner
     container_name: cleaner
     env_file: .env
+    ports:
+      - "8003:8000"  # Prometheus metrics endpoint
     volumes:
       - ./data/gold:/data/gold  # Persist DuckDB file on host
     depends_on:
@@ -78,6 +82,7 @@ services:
     env_file: .env
     ports:
       - "8501:8501"  # Expose Streamlit web interface
+      - "8004:8000"  # Prometheus metrics endpoint
     volumes:
       - /var/spool/cron/crontabs:/var/spool/cron/crontabs
       - ./data/gold:/data/gold:ro  # Read-only access to Gold database

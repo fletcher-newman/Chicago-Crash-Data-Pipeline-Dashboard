@@ -16,5 +16,8 @@ COPY . .
 # Create directory for Gold database (will be mounted as volume)
 RUN mkdir -p /data/gold
 
+# Expose metrics port
+EXPOSE 8000
+
 # Run the cleaner
 CMD ["python", "-u", "cleaner.py"]

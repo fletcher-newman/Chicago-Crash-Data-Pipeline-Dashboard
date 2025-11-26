@@ -61,7 +61,7 @@ def get_minio_client(endpoint: Optional[str] = None) -> Minio:
     )
 
     return Minio(
-        minio_endpoint,
+        endpoint=minio_endpoint,
         access_key=MINIO_ACCESS,
         secret_key=MINIO_SECRET,
         secure=MINIO_SECURE,
@@ -100,7 +100,7 @@ def download_silver_csv(
 
     # Check if object exists
     try:
-        stat = client.stat_object(bucket, object_key)
+        stat = client.stat_object(bucket_name=bucket, object_name=object_key)
         logging.info(f"Found object: size={stat.size} bytes, last_modified={stat.last_modified}")
     except S3Error as e:
         if e.code == "NoSuchKey":
@@ -114,7 +114,7 @@ def download_silver_csv(
     # Download the object
     response = None
     try:
-        response = client.get_object(bucket, object_key)
+        response = client.get_object(bucket_name=bucket, object_name=object_key)
         data = response.read()
 
         # Load into pandas DataFrame

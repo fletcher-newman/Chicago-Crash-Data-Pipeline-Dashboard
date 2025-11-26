@@ -1,0 +1,18 @@
+{
+	"ulid": "01KAZRCPD1ZHZCVAZHXN41DXQM",
+	"minTime": 1764136800219,
+	"maxTime": 1764144000000,
+	"stats": {
+		"numSamples": 330770,
+		"numFloatSamples": 330770,
+		"numSeries": 654,
+		"numChunks": 3461
+	},
+	"compaction": {
+		"level": 1,
+		"sources": [
+			"01KAZRCPD1ZHZCVAZHXN41DXQM"
+		]
+	},
+	"version": 1
+}
