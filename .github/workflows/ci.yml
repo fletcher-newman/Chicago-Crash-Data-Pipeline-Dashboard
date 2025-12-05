@@ -37,6 +37,11 @@ jobs:
           pip install -r streamlit_frontend/requirements.txt
 
       - name: Test Python imports
+        env:
+          RABBITMQ_URL: "amqp://dummy:dummy@localhost:5672/"
+          MINIO_ENDPOINT: "localhost:9000"
+          MINIO_USER: "dummy"
+          MINIO_PASS: "dummy"
         run: |
           python -c "import sys; sys.path.insert(0, 'transformer'); import transformer"
           python -c "import sys; sys.path.insert(0, 'cleaner'); import cleaner"
@@ -90,9 +95,18 @@ jobs:
           python-version: '3.12'
 
       - name: Install Python dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt || echo "No root requirements.txt"
+          pip install -r transformer/requirements.txt
+          pip install -r cleaner/requirements.txt
+          pip install -r streamlit_frontend/requirements.txt
 
       - name: Transformer import test
+        env:
+          RABBITMQ_URL: "amqp://dummy:dummy@localhost:5672/"
+          MINIO_ENDPOINT: "localhost:9000"
+          MINIO_USER: "dummy"
+          MINIO_PASS: "dummy"
         run: |
           python - <<EOF
           import sys
@@ -102,6 +116,11 @@ jobs:
           EOF
 
       - name: Cleaner import test
+        env:
+          RABBITMQ_URL: "amqp://dummy:dummy@localhost:5672/"
+          MINIO_ENDPOINT: "localhost:9000"
+          MINIO_USER: "dummy"
+          MINIO_PASS: "dummy"
         run: |
           python - <<EOF
           import sys
