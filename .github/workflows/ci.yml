@@ -93,6 +93,11 @@ jobs:
           go mod tidy
 
       - name: Extractor help test
+        env:
+          RABBITMQ_URL: "amqp://dummy:dummy@localhost:5672/"
+          MINIO_ENDPOINT: "localhost:9000"
+          MINIO_USER: "dummy"
+          MINIO_PASS: "dummy"
         run: |
           cd extractor
           go run main.go --help
