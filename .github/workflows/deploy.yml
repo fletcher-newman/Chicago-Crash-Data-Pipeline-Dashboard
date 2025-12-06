@@ -10,5 +10,5 @@ jobs:
     name: Deploy Pipeline to Azure
     runs-on: ubuntu-latest
 
-    steps:
-      # You will fill this in next part
+    # steps:
+    #   # You will fill this in next part
