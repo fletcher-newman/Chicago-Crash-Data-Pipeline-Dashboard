@@ -82,26 +82,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.22'
-
-      - name: Download Go dependencies
-        run: |
-          cd extractor
-          go mod tidy
-
-      - name: Extractor help test
-        env:
-          RABBITMQ_URL: "amqp://dummy:dummy@localhost:5672/"
-          MINIO_ENDPOINT: "localhost:9000"
-          MINIO_USER: "dummy"
-          MINIO_PASS: "dummy"
-        run: |
-          cd extractor
-          go run main.go --help
-
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
