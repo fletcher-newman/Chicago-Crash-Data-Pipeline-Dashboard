@@ -90,7 +90,7 @@ jobs:
       - name: Download Go dependencies
         run: |
           cd extractor
-          go mod download
+          go mod tidy
 
       - name: Extractor help test
         run: |
