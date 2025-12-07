@@ -51,7 +51,7 @@ jobs:
             sleep 10
 
             echo "🔍 Checking Streamlit metrics..."
-            curl -f http://localhost:8000/metrics
+            curl -f http://localhost:8501
 
             echo "🔍 Checking Extractor metrics..."
             curl -f http://localhost:8001/metrics
