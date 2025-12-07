@@ -31,10 +31,11 @@ jobs:
         run: |
           ssh -i key.pem -o StrictHostKeyChecking=no "$AZURE_USER@$AZURE_HOST" "
             cd \"$PROJECT_PATH\" && \
+            docker compose down && \
             git fetch origin && \
+            git rm --cached -r grafana_data/ 2>/dev/null || true && \
             git reset --hard origin/main && \
             docker compose pull && \
             docker compose build && \
-            docker compose down && \
             docker compose up -d
           "
