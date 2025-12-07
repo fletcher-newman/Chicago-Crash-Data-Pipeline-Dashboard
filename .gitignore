@@ -48,6 +48,9 @@ Thumbs.db
 # Docker volumes (if any)
 volumes/
 
+# Grafana data (runtime database files)
+grafana_data/
+
 # Cron job configs and scripts
 /tmp/pipeline_configs/
 /tmp/pipeline_job_*.sh
