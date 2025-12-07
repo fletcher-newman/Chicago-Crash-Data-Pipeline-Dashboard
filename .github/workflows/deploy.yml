@@ -47,16 +47,19 @@ jobs:
 
             cd "$PROJECT_PATH"
 
-            echo "🔍 Checking Streamlit health..."
-            curl -f http://localhost:8501/metrics
+            echo "⏳ Waiting for services to start..."
+            sleep 10
 
-            echo "🔍 Checking Extractor health..."
+            echo "🔍 Checking Streamlit metrics..."
+            curl -f http://localhost:8000/metrics
+
+            echo "🔍 Checking Extractor metrics..."
             curl -f http://localhost:8001/metrics
 
-            echo "🔍 Checking Transformer health..."
+            echo "🔍 Checking Transformer metrics..."
             curl -f http://localhost:8002/metrics
 
-            echo "🔍 Checking Cleaner health..."
+            echo "🔍 Checking Cleaner metrics..."
             curl -f http://localhost:8003/metrics
 
             echo "✅ All HTTP health checks passed."
